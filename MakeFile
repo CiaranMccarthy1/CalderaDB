@@ -1,0 +1,67 @@
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c11 -O2 -g -D_GNU_SOURCE
+LDFLAGS = -lpthread -lm
+
+# Directories
+SRC_DIR = src
+INCLUDE_DIR = include
+TEST_DIR = tests
+BENCH_DIR = bench
+BUILD_DIR = build
+BIN_DIR = bin
+
+# Source files
+SRCS = $(wildcard $(SRC_DIR)/*.c)
+OBJS = $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+
+# Test sources
+TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
+TEST_OBJS = $(TEST_SRCS:$(TEST_DIR)/%.c=$(BUILD_DIR)/tests/%.o)
+
+# Bench sources
+BENCH_SRCS = $(wildcard $(BENCH_DIR)/*.c)
+BENCH_OBJS = $(BENCH_SRCS:$(BENCH_DIR)/%.c=$(BUILD_DIR)/bench/%.o)
+
+# Targets
+TARGET = $(BIN_DIR)/calderadb
+TEST_TARGET = $(BIN_DIR)/calderadb_tests
+BENCH_TARGET = $(BIN_DIR)/calderadb_bench
+
+# Includes
+INCLUDES = -I$(INCLUDE_DIR)
+
+.PHONY: all clean test bench directories
+
+all: directories $(TARGET)
+
+directories:
+	mkdir -p $(BUILD_DIR) $(BUILD_DIR)/tests $(BUILD_DIR)/bench $(BIN_DIR)
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	$(CC) $(CFLAGS) $(INCLUDES) -MMD -c $< -o $@
+
+$(TEST_TARGET): $(OBJS) $(TEST_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/tests/%.o: $(TEST_DIR)/%.c
+	$(CC) $(CFLAGS) $(INCLUDES) -MMD -c $< -o $@
+
+$(BENCH_TARGET): $(OBJS) $(BENCH_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/bench/%.o: $(BENCH_DIR)/%.c
+	$(CC) $(CFLAGS) $(INCLUDES) -MMD -c $< -o $@
+
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+bench: $(BENCH_TARGET)
+	./$(BENCH_TARGET)
+
+clean:
+	rm -rf $(BUILD_DIR) $(BIN_DIR)
+
+-include $(OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(BENCH_OBJS:.o=.d)
