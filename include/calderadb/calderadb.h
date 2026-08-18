@@ -8,5 +8,6 @@
 #include "calderadb/eviction/evictionPolicy.h"
 #include "calderadb/network/server.h"
 #include "calderadb/util/hashTable.h"
+#include "calderadb/engine/engine.h"
 
 #endif /* CALDERADB_H */

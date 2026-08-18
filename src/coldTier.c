@@ -243,3 +243,67 @@ bool cold_tier_recover(cold_tier_t* tier) {
     
     return true;
 }
+
+bool cold_tier_compact(cold_tier_t* tier) {
+    if (!tier) return false;
+    
+    char tmp_path[264]; // ponytail: 256 + ".tmp"
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", tier->data_path);
+    FILE* tmp_fp = fopen(tmp_path, "wb");
+    if (!tmp_fp) return false;
+
+    // ponytail: single-pass compaction, no incremental/background, just rewrite the whole file
+    uint64_t new_offset = 0;
+    
+    ht_iter_t* it = hashtable_iter_create(tier->index);
+    if (!it) {
+        fclose(tmp_fp);
+        remove(tmp_path);
+        return false;
+    }
+    
+    doc_id_t key;
+    document_t* val;
+    while (hashtable_iter_next(it, &key, &val)) {
+        index_entry_t* entry = (index_entry_t*)val;
+        
+        fseek(tier->data_fp, entry->offset, SEEK_SET);
+        uint32_t id_len;
+        if (fread(&id_len, sizeof(uint32_t), 1, tier->data_fp) != 1) continue;
+        
+        char* id_data = malloc(id_len);
+        if (fread(id_data, id_len, 1, tier->data_fp) != 1) { free(id_data); continue; }
+        
+        uint32_t payload_len;
+        if (fread(&payload_len, sizeof(uint32_t), 1, tier->data_fp) != 1) { free(id_data); continue; }
+        
+        uint8_t* payload = malloc(payload_len);
+        if (fread(payload, payload_len, 1, tier->data_fp) != 1) { free(id_data); free(payload); continue; }
+        
+        uint64_t stored_checksum;
+        if (fread(&stored_checksum, sizeof(uint64_t), 1, tier->data_fp) != 1) { free(id_data); free(payload); continue; }
+        
+        uint64_t current_entry_offset = new_offset;
+        fwrite(&id_len, sizeof(uint32_t), 1, tmp_fp);
+        fwrite(id_data, id_len, 1, tmp_fp);
+        fwrite(&payload_len, sizeof(uint32_t), 1, tmp_fp);
+        fwrite(payload, payload_len, 1, tmp_fp);
+        fwrite(&stored_checksum, sizeof(uint64_t), 1, tmp_fp);
+        
+        entry->offset = current_entry_offset;
+        new_offset += 4 + id_len + 4 + payload_len + 8;
+        
+        free(id_data);
+        free(payload);
+    }
+    hashtable_iter_destroy(it);
+    
+    fflush(tmp_fp);
+    fclose(tmp_fp);
+    fclose(tier->data_fp);
+    rename(tmp_path, tier->data_path);
+    tier->data_fp = fopen(tier->data_path, "ab+");
+    tier->current_offset = new_offset;
+    
+    return true;
+}

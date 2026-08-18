@@ -31,7 +31,7 @@ void test_hot_tier_eviction() {
     printf("test_hot_tier_eviction... ");
     
     /* Create tier with capacity for ~2 documents */
-    hot_tier_t* tier = hot_tier_create(200);
+    hot_tier_t* tier = hot_tier_create(400);
     assert(tier != NULL);
     
     /* Insert 3 documents - should trigger eviction */

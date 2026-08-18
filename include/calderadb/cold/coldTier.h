@@ -17,6 +17,7 @@ void cold_tier_destroy(cold_tier_t* tier);
 bool cold_tier_append(cold_tier_t* tier, document_t* doc);
 document_t* cold_tier_read(cold_tier_t* tier, const doc_id_t* id);
 bool cold_tier_mark_deleted(cold_tier_t* tier, const doc_id_t* id);
+bool cold_tier_compact(cold_tier_t* tier);
 
 /* Statistics */
 size_t cold_tier_total_bytes(const cold_tier_t* tier);

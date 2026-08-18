@@ -49,15 +49,8 @@ bool hot_tier_insert(hot_tier_t* tier, document_t* doc) {
     /* Check capacity */
     size_t doc_size = doc->size_bytes + sizeof(doc_id_t) + sizeof(document_t);
     if (tier->used_bytes + doc_size > tier->capacity_bytes) {
-        /* Evict one document to make room */
-        document_t* evicted = hot_tier_evict_one(tier);
-        if (evicted) {
-            /* Document is evicted - caller should move to cold tier */
-            doc->location = TIER_COLD;
-        } else {
-            pthread_rwlock_unlock(&tier->lock);
-            return false;
-        }
+        pthread_rwlock_unlock(&tier->lock);
+        return false;
     }
     
     /* Insert into hash table */

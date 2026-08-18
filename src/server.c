@@ -25,7 +25,13 @@ struct tcp_server {
 };
 
 static void* accept_loop(void* arg);
-static void handle_client(int fd, request_handler_fn handler, void* ctx);
+static void* client_thread(void* arg);
+
+struct client_args {
+    int fd;
+    request_handler_fn handler;
+    void* ctx;
+};
 
 tcp_server_t* tcp_server_create(int port, int max_connections, request_handler_fn handler, void* ctx) {
     tcp_server_t* server = calloc(1, sizeof(tcp_server_t));
@@ -129,26 +135,60 @@ static void* accept_loop(void* arg) {
         int client_fd = accept(server->listen_fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) continue;
         
-        /* Handle client connection (simple: one request, then close) */
-        handle_client(client_fd, server->handler, server->ctx);
-        close(client_fd);
+        /* Handle client connection with detached thread */
+        pthread_t thread;
+        struct client_args* args = malloc(sizeof(struct client_args));
+        args->fd = client_fd;
+        args->handler = server->handler;
+        args->ctx = server->ctx;
+        
+        pthread_create(&thread, NULL, client_thread, args);
+        pthread_detach(thread);
     }
     
     return NULL;
 }
 
-static void handle_client(int fd, request_handler_fn handler, void* ctx) {
-    if (!handler) return;
+static void* client_thread(void* arg) {
+    struct client_args* args = (struct client_args*)arg;
+    int fd = args->fd;
+    request_handler_fn handler = args->handler;
+    void* ctx = args->ctx;
+    free(args);
+
+    if (!handler) {
+        close(fd);
+        return NULL;
+    }
     
     uint8_t buffer[4096];
-    ssize_t n = read(fd, buffer, sizeof(buffer));
-    if (n <= 0) return;
+    size_t buf_len = 0;
     
-    size_t resp_len = 0;
-    uint8_t* response = handler(ctx, buffer, (size_t)n, &resp_len);
-    if (response && resp_len > 0) {
-        write(fd, response, resp_len);
+    while (1) {
+        ssize_t n = read(fd, buffer + buf_len, sizeof(buffer) - buf_len);
+        if (n <= 0) break;
+        buf_len += n;
+        
+        while (1) {
+            uint8_t* newline = memchr(buffer, '\n', buf_len);
+            if (!newline) {
+                if (buf_len == sizeof(buffer)) {
+                    buf_len = 0;
+                }
+                break;
+            }
+            size_t cmd_len = (newline - buffer) + 1;
+            size_t resp_len = 0;
+            uint8_t* response = handler(ctx, buffer, cmd_len, &resp_len);
+            if (response && resp_len > 0) {
+                write(fd, response, resp_len);
+            }
+            memmove(buffer, buffer + cmd_len, buf_len - cmd_len);
+            buf_len -= cmd_len;
+        }
     }
+    close(fd);
+    return NULL;
 }
 
 int tcp_server_connections(tcp_server_t* server) {
