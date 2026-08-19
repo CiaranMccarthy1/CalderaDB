@@ -44,7 +44,7 @@ int main() {
     
     system("rm -rf /tmp/calderadb_bench_lat");
     
-    calderadb_engine_t* engine = engine_create(10 * 1024 * 1024, "/tmp/calderadb_bench_lat");
+    calderadb_engine_t* engine = engine_create(1024 * 1024 * 1024, "/tmp/calderadb_bench_lat");
     assert(engine != NULL);
     
     // Pre-allocate keys

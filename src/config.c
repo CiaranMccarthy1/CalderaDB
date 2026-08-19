@@ -52,7 +52,7 @@ bool config_load(const char* filename, config_t* cfg) {
 
 void config_init_default(config_t* cfg) {
     cfg->port = 9090;
-    cfg->hot_capacity_bytes = 512 * 1024 * 1024;
+    cfg->hot_capacity_bytes = 1024 * 1024 * 1024;
     cfg->eviction_x = 5;
     cfg->eviction_y = 60000;
     strcpy(cfg->data_dir, "/tmp/calderadb");

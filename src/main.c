@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
     /* Parse arguments */
     const char* data_dir = "/tmp/calderadb";
     int port = 9090;
-    size_t hot_capacity = 512 * 1024 * 1024; /* 512 MB */
+    size_t hot_capacity = 1024 * 1024 * 1024; /* 1 GB */
     
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) {

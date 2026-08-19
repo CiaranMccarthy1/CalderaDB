@@ -7,7 +7,7 @@
 #include "calderadb/engine/engine.h"
 #include "calderadb/core/types.h"
 
-#define NUM_DOCS 50000
+#define NUM_DOCS 650000
 
 uint64_t timespec_to_ns(struct timespec* ts) {
     return ts->tv_sec * (uint64_t)1e9 + ts->tv_nsec;
@@ -20,7 +20,7 @@ int main() {
     system("rm -rf /tmp/calderadb_bench_tp");
     
     // 1MB hot tier to force eviction
-    calderadb_engine_t* engine = engine_create(1024 * 1024, "/tmp/calderadb_bench_tp");
+    calderadb_engine_t* engine = engine_create(128 * 1024 * 1024, "/tmp/calderadb_bench_tp");
     assert(engine != NULL);
     
     char** keys = malloc(NUM_DOCS * sizeof(char*));
