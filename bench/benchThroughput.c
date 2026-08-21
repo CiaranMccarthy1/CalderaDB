@@ -14,13 +14,14 @@ uint64_t timespec_to_ns(struct timespec* ts) {
 }
 
 int main() {
+    size_t hot_capacity = 128 * 1024 * 1024; 
+
     printf("========== CalderaDB Throughput Benchmark ==========\n");
-    printf("Documents: %d, Payload: 100 bytes, Hot tier: 1MB\n\n", NUM_DOCS);
+    printf("Documents: %d, Payload: 100 bytes, Hot tier: %zu MB\n\n", NUM_DOCS, hot_capacity / (1024 * 1024));
     
     system("rm -rf /tmp/calderadb_bench_tp");
     
-    // 1MB hot tier to force eviction
-    calderadb_engine_t* engine = engine_create(128 * 1024 * 1024, "/tmp/calderadb_bench_tp");
+    calderadb_engine_t* engine = engine_create(hot_capacity, "/tmp/calderadb_bench_tp");
     assert(engine != NULL);
     
     char** keys = malloc(NUM_DOCS * sizeof(char*));
@@ -115,10 +116,10 @@ int main() {
     printf("-------------------\n");
     
     size_t avg_doc_size = val_len + 64;  // payload + overhead
-    size_t docs_that_fit_hot = (1024 * 1024) / avg_doc_size;
+    size_t docs_that_fit_hot = hot_capacity / avg_doc_size;
     
     printf("Average doc size: ~%zu bytes\n", avg_doc_size);
-    printf("Docs that fit in 1MB: ~%zu\n", docs_that_fit_hot);
+    printf("Docs that fit in hot tier: ~%zu\n", docs_that_fit_hot);
     printf("Actual docs in hot tier: %zu\n", hot_tier_doc_count(hot));
     printf("Docs in cold tier: %zu\n", cold_tier_doc_count(cold));
     
