@@ -19,7 +19,7 @@ bool config_load(const char* filename, config_t* cfg) {
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
         char* newline = strchr(line, '\n');
-        if (newline) *newline = '\0';
+        if (newline) *newline = '\0';s
         
         char* eq = strchr(line, '=');
         if (!eq) continue;
@@ -50,6 +50,8 @@ bool config_load(const char* filename, config_t* cfg) {
     return true;
 }
 
+
+// default config values 
 void config_init_default(config_t* cfg) {
     cfg->port = 9090;
     cfg->hot_capacity_bytes = 1024 * 1024 * 1024;

@@ -1,6 +1,6 @@
 # CalderaDB
 
-CalderaDB is an access-aware, tiered NoSQL document database written in C11. It combines low-latency in-memory operations with durable append-only disk storage by automatically promoting frequently accessed "hot" data and demoting colder records.
+CalderaDB is an access-aware, tiered NoSQL document database written in C11. It combines low-latency in-memory operations with durable append-only disk storage by automatically promoting frequently accessed ("hot") data and demoting colder records based on configurable eviction policies.
 
 ---
 
@@ -235,6 +235,62 @@ valgrind --leak-check=full --show-leak-kinds=all ./bin/calderadb_tests
 
 ---
 
+## Roadmap
+
+This section tracks what is implemented, what is planned, and what is out of scope for the v1 release.
+
+### ✅ Implemented
+
+| Area | Detail |
+| :--- | :--- |
+| Two-tier storage | Hot (RAM hash table) + Cold (append-only binary log) |
+| Automatic promotion | Cold→Hot on cache-miss read |
+| LRU eviction | O(n) scan evicts oldest `last_accessed` entry |
+| Crash recovery | Sequential log scan rebuilds offset index at startup |
+| Cold-tier compaction | Single-pass atomic rewrite via temp file + `rename` |
+| Checksum integrity | xxHash64 per record, verified on every cold-tier read |
+| Concurrent access | `pthread_rwlock_t` on hot tier; engine-level mutex |
+| TCP wire protocol | Newline-delimited text; `PING / GET / SET / DEL / STATS` |
+| Graceful shutdown | `SIGINT`/`SIGTERM` flush and free |
+| Build system | GNU Make with `test`, `bench`, `debug` (ASan/UBSan), `valgrind` targets |
+| Unit tests | Cold tier, hot tier, hash table, eviction — four test binaries |
+| Benchmarks | `benchLatency` and `benchThroughput` |
+
+---
+
+### 🔧 Planned (v1 scope)
+
+#### Correctness Gaps
+
+| Item |
+| :--- |
+| **Replace stub checksum with real xxHash** |
+| **Eviction O(n) scan → O(1) LRU list** |
+| **Persist tombstones on DEL** |
+| **Engine lock is a mutex, not rwlock** |
+| **`engine_set` fallback to cold tier** |
+
+#### Presentation Quality
+
+| Item |
+| :--- |
+| **`KEYS <prefix>` command** |
+| **`TTL` / `EXPIRE` support** |
+| **Benchmark result table in README** |
+| **`COMPACT` command** |
+| **Config file (`.conf`)** |
+
+#### Academic Depth
+
+| Item |
+| :--- |
+| **Sliding-window access frequency** |
+| **Configurable eviction policy** |
+| **`SCAN` cursor command** |
+| **Concurrent benchmark comparison** |
+
+---
+
 ## License
 
-MIT License. See [LICENSE](file:///home/ciaran/Projects/c/CalderaDB/LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.
