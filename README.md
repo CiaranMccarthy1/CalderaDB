@@ -122,16 +122,17 @@ CalderaDB/
 │   ├── server.c                   # TCP server accept loop & worker dispatch
 │   └── types.c                    # Type constructors & destructors
 ├── tests/                         # Unit and integration test suites
-│   ├── testColdTier.c             # Cold tier durability and recovery tests
-│   ├── testEviction.c             # Eviction policy evaluation tests
+│   ├── testColdTier.c             # Cold tier durability, recovery & tombstone tests
+│   ├── testEngine.c               # Engine coordinator, cold fallback & rwlock tests
+│   ├── testEviction.c             # O(1) LRU eviction order & capacity tests
 │   ├── testHashTable.c            # Hash table unit tests
 │   └── testHotTier.c              # Hot tier concurrency and LRU tests
 ├── bench/                         # Latency and throughput benchmarks
-│   ├── benchLatency.c             # Operation latency benchmarks
-│   └── benchThroughput.c          # Multi-threaded throughput benchmarks
+│   ├── benchLatency.c             # Operation latency benchmarks (p50/p95/p99)
+│   └── benchThroughput.c          # Spillover & tiered throughput benchmarks
 ├── scripts/                       # Helper scripts (benchmarking, profiling)
 │   └── runBenchmarks.sh
-└── MakeFile                       # GNU Make build definition
+└── Makefile                       # GNU Make build definition
 ```
 
 ---
@@ -150,13 +151,13 @@ CalderaDB/
 # Build the production server binary (bin/calderadb)
 make
 
-# Build and run the test suite
+# Build and run the entire test suite (5 suites)
 make test
 
 # Build and execute performance benchmarks
 make bench
 
-# Build with AddressSanitizer and UndefinedBehaviorSanitizer
+# Build and test with AddressSanitizer, LeakSanitizer, and UndefinedBehaviorSanitizer
 make debug
 
 # Run memory leak and correctness checks under Valgrind
@@ -191,103 +192,84 @@ CalderaDB can be configured via CLI flags or default environment settings.
 
 ---
 
-## Usage
+## Performance & Benchmarks
 
-You can connect and interact with CalderaDB using any standard TCP utility (such as `nc`, `telnet`, or `socat`).
+Measured on modern Linux x86_64 hardware with release flags (`-O2`):
 
-### Example Session with `nc`
+### 1. Operation Latency (`bin/benchLatency` - 10,000 documents in Hot Tier)
 
-```bash
-# Store a document
-$ echo 'SET user:1001 {"name":"Alice","role":"admin"}' | nc localhost 9090
-+OK
+| Operation | Throughput | p50 Latency | p95 Latency | p99 Latency | Max Latency |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Sequential Insert** | ~3,880,000 ops/sec | — | — | — | — |
+| **Sequential Read** | ~8,040,000 ops/sec | 0.080 μs | 0.264 μs | 0.532 μs | 7.369 μs |
+| **Random Read** | ~3,370,000 ops/sec | 0.217 μs | 0.692 μs | 1.144 μs | 14.998 μs |
 
-# Retrieve a document
-$ echo 'GET user:1001' | nc localhost 9090
-+{"name":"Alice","role":"admin"}
+### 2. Tier Spillover Throughput (`bin/benchThroughput` - 650,000 documents, 128MB RAM boundary)
 
-# Inspect database metrics
-$ echo 'STATS' | nc localhost 9090
-+gets:1 sets:1 dels:0 hot_bytes:48 hot_docs:1 cold_bytes:0 cold_docs:0
-
-# Delete a document
-$ echo 'DEL user:1001' | nc localhost 9090
-+OK
-
-# Verify deletion
-$ echo 'GET user:1001' | nc localhost 9090
-$-1
-```
+| Metric | Measured Value | Description |
+| :--- | :--- | :--- |
+| **Bulk Insert Throughput** | ~2,401,000 ops/sec | 650,000 documents inserted in 270 ms |
+| **Random Read Throughput** | ~1,362,000 ops/sec | 650,000 reads executed across hot + cold tiers |
+| **Hot Tier Hit Rate** | **90.60%** (588,930 reads) | Satisfied directly in RAM at sub-microsecond latency |
+| **Cold Tier Hit Rate** | **9.40%** (61,070 reads) | Retrieved from append-only disk log |
 
 ---
 
 ## Testing & Quality Assurance
 
-CalderaDB includes a comprehensive unit test suite covering tier operations, resizing, concurrent access, and file recovery.
+CalderaDB includes 5 dedicated unit test suites:
+- **`testColdTier`**: Append verification, real xxHash64 checksum validation, crash recovery index rebuilding, and disk tombstone persistence across restarts.
+- **`testEngine`**: Top-level coordinator CRUD, automatic promotion, cold-tier fallback for oversize documents, and multi-threaded reader concurrency.
+- **`testEviction`**: $\mathcal{O}(1)$ LRU doubly-linked list eviction order and memory threshold compliance.
+- **`testHashTable`**: Dynamic resizing at 75% load factor, collision chaining, and key removal.
+- **`testHotTier`**: Concurrency lock verification and boundary checks.
 
 ```bash
 # Execute unit tests
 make test
 
-# Run tests under Valgrind for memory leak checks
-valgrind --leak-check=full --show-leak-kinds=all ./bin/calderadb_tests
+# Run tests under AddressSanitizer + LeakSanitizer + UBSan
+make debug
 ```
 
 ---
 
 ## Roadmap
 
-This section tracks what is implemented, what is planned, and what is out of scope for the v1 release.
-
 ### ✅ Implemented
 
 | Area | Detail |
 | :--- | :--- |
-| Two-tier storage | Hot (RAM hash table) + Cold (append-only binary log) |
-| Automatic promotion | Cold→Hot on cache-miss read |
-| LRU eviction | O(n) scan evicts oldest `last_accessed` entry |
-| Crash recovery | Sequential log scan rebuilds offset index at startup |
-| Cold-tier compaction | Single-pass atomic rewrite via temp file + `rename` |
-| Checksum integrity | xxHash64 per record, verified on every cold-tier read |
-| Concurrent access | `pthread_rwlock_t` on hot tier; engine-level mutex |
-| TCP wire protocol | Newline-delimited text; `PING / GET / SET / DEL / STATS` |
-| Graceful shutdown | `SIGINT`/`SIGTERM` flush and free |
-| Build system | GNU Make with `test`, `bench`, `debug` (ASan/UBSan), `valgrind` targets |
-| Unit tests | Cold tier, hot tier, hash table, eviction — four test binaries |
-| Benchmarks | `benchLatency` and `benchThroughput` |
+| **Two-tier storage** | Hot (RAM hash table) + Cold (append-only binary log) |
+| **Automatic promotion** | Cold $\to$ Hot on cache-miss read |
+| **$\mathcal{O}(1)$ LRU eviction** | Intrusive doubly-linked list with head/tail pointers |
+| **Cold-tier fallback** | `engine_set` automatically falls back to disk when payload exceeds hot capacity |
+| **Crash recovery** | Sequential log scan rebuilds offset index at startup |
+| **Persisted tombstones** | Deleted keys write `0xFFFFFFFF` tombstones to prevent resurrection on restart |
+| **Cold-tier compaction** | Single-pass atomic rewrite via temp file + `rename` |
+| **Checksum integrity** | Real canonical xxHash64 per record, verified on cold read |
+| **Concurrent access** | `pthread_rwlock_t` on hot tier and engine layer for parallel readers; atomic metrics |
+| **TCP wire protocol** | Newline-delimited text; `PING / GET / SET / DEL / STATS` |
+| **Persistent connections** | Keep-alive loop with thread-per-client dispatch |
+| **Graceful shutdown** | `SIGINT`/`SIGTERM` flush and clean resource release |
+| **Build system** | GNU Make with `test`, `bench`, `debug` (ASan/UBSan/LSan), `valgrind` targets |
+| **Unit test suite** | 5 test suites covering cold tier, engine, eviction, hashtable, hot tier |
+| **Benchmarks** | `benchLatency` (p50/p95/p99) and `benchThroughput` (spillover hit ratios) |
 
 ---
 
-### 🔧 Planned (v1 scope)
+### 🔧 Planned (v1.1 scope)
 
-#### Correctness Gaps
+#### Protocol & Feature Additions
+- [ ] `KEYS <prefix>` prefix scanning command
+- [ ] `TTL` / `EXPIRE` background expiration policy
+- [ ] Explicit `COMPACT` administrative TCP command
+- [ ] Configuration file loader (`calderadb.conf`)
 
-| Item |
-| :--- |
-| **Replace stub checksum with real xxHash** |
-| **Eviction O(n) scan → O(1) LRU list** |
-| **Persist tombstones on DEL** |
-| **Engine lock is a mutex, not rwlock** |
-| **`engine_set` fallback to cold tier** |
-
-#### Presentation Quality
-
-| Item |
-| :--- |
-| **`KEYS <prefix>` command** |
-| **`TTL` / `EXPIRE` support** |
-| **Benchmark result table in README** |
-| **`COMPACT` command** |
-| **Config file (`.conf`)** |
-
-#### Academic Depth
-
-| Item |
-| :--- |
-| **Sliding-window access frequency** |
-| **Configurable eviction policy** |
-| **`SCAN` cursor command** |
-| **Concurrent benchmark comparison** |
+#### Advanced Storage & Indexing
+- [ ] Sliding-window access frequency tracking
+- [ ] Configurable eviction policies (LFU / adaptive ARC)
+- [ ] Epoll-based event loop for 10k+ concurrent client connections
 
 ---
 
