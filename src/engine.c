@@ -10,7 +10,7 @@ struct calderadb_engine {
     pthread_rwlock_t lock; 
 };
 
-calderadb_engine_t* engine_create(size_t hot_capacity, const char* data_dir) {
+calderadb_engine_t* engine_create_with_sync_policy(size_t hot_capacity, const char* data_dir, sync_policy_t sync_policy) {
     calderadb_engine_t* engine = calloc(1, sizeof(calderadb_engine_t));
     if (!engine) return NULL;
     
@@ -20,7 +20,7 @@ calderadb_engine_t* engine_create(size_t hot_capacity, const char* data_dir) {
         return NULL;
     }
     
-    engine->cold = cold_tier_create(data_dir);
+    engine->cold = cold_tier_create(data_dir, sync_policy);
     if (!engine->cold) {
         hot_tier_destroy(engine->hot);
         free(engine);
@@ -29,6 +29,10 @@ calderadb_engine_t* engine_create(size_t hot_capacity, const char* data_dir) {
     
     pthread_rwlock_init(&engine->lock, NULL);
     return engine;
+}
+
+calderadb_engine_t* engine_create(size_t hot_capacity, const char* data_dir) {
+    return engine_create_with_sync_policy(hot_capacity, data_dir, SYNC_EVERYSEC);
 }
 
 void engine_destroy(calderadb_engine_t* engine) {

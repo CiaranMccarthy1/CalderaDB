@@ -171,23 +171,38 @@ make clean
 
 ## Configuration
 
-CalderaDB can be configured via CLI flags or default environment settings.
+CalderaDB can be configured via CLI flags, configuration files, or default environment settings.
 
 ### Command-Line Arguments
 | Option | Default Value | Description |
 | :--- | :--- | :--- |
 | `--port <port>` | `9090` | TCP port for incoming client connections |
 | `--data-dir <path>` | `/tmp/calderadb` | Filesystem directory for cold tier storage files |
-| `--hot-capacity <MB>` | `512` | Maximum RAM capacity allocated for hot tier (in MB) |
+| `--hot-capacity <MB>` | `1024` | Maximum RAM capacity allocated for hot tier (in MB) |
+| `--sync-policy <policy>` | `everysec` | Durability policy for cold tier (`always`, `everysec`, `no`) |
+| `--config <path>` | — | Path to configuration file |
+| `--help, -h` | — | Show command-line help |
+
+### Cold Tier Durability Policies (`--sync-policy`)
+Users can configure the fsync policy for disk writes to balance durability and write performance:
+
+| Policy | Behavior | Durability Guarantee | Use Case |
+| :--- | :--- | :--- | :--- |
+| **`always`** | `fdatasync()` after every cold-tier append | Zero data loss; guaranteed durable on disk immediately | Mission-critical data, financial transactions |
+| **`everysec`** *(default)* | Background thread issues `fdatasync()` once per second | Near-zero loss (at most 1 second of cold writes lost on crash) | Recommended default; optimal performance/safety balance |
+| **`no`** | Never calls `fdatasync()`; relies on OS page cache flushes | High throughput; uncommitted trailing records pruned during crash recovery | Ephemeral caches, bulk loading, high ingestion workloads |
 
 ### Starting the Server
 
 ```bash
-# Run with default settings (port 9090, 512MB RAM, /tmp/calderadb data dir)
+# Run with default settings (port 9090, 1024MB RAM, everysec sync policy)
 ./bin/calderadb
 
-# Run with custom parameters
-./bin/calderadb --port 6380 --data-dir ./data --hot-capacity 1024
+# Run with maximum durability (SYNC_ALWAYS)
+./bin/calderadb --sync-policy=always
+
+# Run with maximum throughput (SYNC_NO)
+./bin/calderadb --port 6380 --data-dir ./data --sync-policy no
 ```
 
 ---

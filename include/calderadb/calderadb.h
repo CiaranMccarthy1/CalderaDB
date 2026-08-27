@@ -9,5 +9,6 @@
 #include "calderadb/network/server.h"
 #include "calderadb/util/hashTable.h"
 #include "calderadb/engine/engine.h"
+#include "calderadb/config.h"
 
 #endif /* CALDERADB_H */

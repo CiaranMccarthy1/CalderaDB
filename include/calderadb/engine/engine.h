@@ -27,6 +27,7 @@ typedef struct {
 } engine_stats_t;
 
 calderadb_engine_t* engine_create(size_t hot_capacity, const char* data_dir);
+calderadb_engine_t* engine_create_with_sync_policy(size_t hot_capacity, const char* data_dir, sync_policy_t sync_policy);
 void engine_destroy(calderadb_engine_t* engine);
 
 // Core operations

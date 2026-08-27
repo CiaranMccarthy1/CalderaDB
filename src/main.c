@@ -80,17 +80,35 @@ uint8_t* request_handler(void* ctx, const uint8_t* req, size_t req_len, size_t* 
         hot_tier_t* hot = engine_hot_tier(engine);
         cold_tier_t* cold = engine_cold_tier(engine);
         
+        sync_policy_t pol = cold_tier_sync_policy(cold);
+        const char* pol_str = config_sync_policy_to_string(pol);
+        uint64_t unsynced = cold_tier_unsynced_bytes(cold);
+        uint64_t last_sync = cold_tier_last_sync_time(cold);
+        
         snprintf(resp_buf, sizeof(resp_buf), 
-            "+gets:%zu sets:%zu dels:%zu hot_hits:%zu cold_hits:%zu misses:%zu hot_docs:%zu hot_bytes:%zu cold_docs:%zu cold_bytes:%zu\r\n",
+            "+gets:%zu sets:%zu dels:%zu hot_hits:%zu cold_hits:%zu misses:%zu hot_docs:%zu hot_bytes:%zu cold_docs:%zu cold_bytes:%zu sync_policy:%s unsynced_bytes:%lu last_sync:%lu\r\n",
             s.total_gets, s.total_sets, s.total_dels, s.hot_hits, s.cold_hits, s.misses,
             hot_tier_doc_count(hot), hot_tier_used_bytes(hot),
-            cold_tier_doc_count(cold), cold_tier_total_bytes(cold));
+            cold_tier_doc_count(cold), cold_tier_total_bytes(cold),
+            pol_str, (unsigned long)unsynced, (unsigned long)last_sync);
     } else {
         snprintf(resp_buf, sizeof(resp_buf), "-ERR unknown command\r\n");
     }
 
     *resp_len = strlen(resp_buf);
     return (uint8_t*)resp_buf;
+}
+
+static void print_usage(const char* prog) {
+    printf("Usage: %s [options]\n", prog);
+    printf("Options:\n");
+    printf("  --port <port>                 TCP port for incoming client connections (default: 9090)\n");
+    printf("  --data-dir <path>             Filesystem directory for cold tier storage (default: /tmp/calderadb)\n");
+    printf("  --hot-capacity <MB>           Maximum RAM capacity allocated for hot tier (in MB) (default: 1024)\n");
+    printf("  --sync-policy <always|everysec|no>  Durability sync policy for cold tier (default: everysec)\n");
+    printf("  --sync-policy=<val>           Durability sync policy for cold tier\n");
+    printf("  --config <path>               Load configuration file\n");
+    printf("  --help, -h                    Show this help message\n");
 }
 
 int main(int argc, char** argv) {
@@ -100,40 +118,49 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     
-    /* Parse arguments */
-    const char* data_dir = "/tmp/calderadb";
-    int port = 9090;
-    size_t hot_capacity = 1024 * 1024 * 1024; /* 1 GB */
+    calderadb_config_t config;
+    config_init_default(&config);
     
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) {
-            data_dir = argv[++i];
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            config_load(argv[++i], &config);
+        } else if (strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) {
+            strncpy(config.data_dir, argv[++i], sizeof(config.data_dir) - 1);
+            config.data_dir[sizeof(config.data_dir) - 1] = '\0';
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-            port = atoi(argv[++i]);
+            config.port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--hot-capacity") == 0 && i + 1 < argc) {
-            hot_capacity = (size_t)atoi(argv[++i]) * 1024 * 1024;
+            config.hot_capacity_bytes = (size_t)atoi(argv[++i]) * 1024 * 1024;
+        } else if (strcmp(argv[i], "--sync-policy") == 0 && i + 1 < argc) {
+            config.sync_policy = config_parse_sync_policy(argv[++i]);
+        } else if (strncmp(argv[i], "--sync-policy=", 14) == 0) {
+            config.sync_policy = config_parse_sync_policy(argv[i] + 14);
         }
     }
     
-    printf("Data directory: %s\n", data_dir);
-    printf("Port: %d\n", port);
-    printf("Hot tier capacity: %zu MB\n", hot_capacity / (1024 * 1024));
+    printf("Data directory: %s\n", config.data_dir);
+    printf("Port: %d\n", config.port);
+    printf("Hot tier capacity: %zu MB\n", config.hot_capacity_bytes / (1024 * 1024));
+    printf("Sync policy: %s\n", config_sync_policy_to_string(config.sync_policy));
     
-    calderadb_engine_t* engine = engine_create(hot_capacity, data_dir);
+    calderadb_engine_t* engine = engine_create_with_sync_policy(config.hot_capacity_bytes, config.data_dir, config.sync_policy);
     if (!engine) {
         fprintf(stderr, "Failed to create engine\n");
         return 1;
     }
     
     /* Create TCP server */
-    tcp_server_t* server = tcp_server_create(port, 128, request_handler, engine);
+    tcp_server_t* server = tcp_server_create(config.port, 128, request_handler, engine);
     if (!server) {
         fprintf(stderr, "Failed to create server\n");
         engine_destroy(engine);
         return 1;
     }
     
-    printf("Server running on port %d\n", port);
+    printf("Server running on port %d\n", config.port);
     printf("Press Ctrl+C to stop\n");
     
     /* Run server (blocking) */
