@@ -128,76 +128,81 @@ int main() {
     
     print_latency_stats("Latencies", seq_latencies, NUM_DOCS);
     
-    // ===== RANDOM READ PHASE =====
+    // ===== RANDOM READ PHASE (lock-free) =====
     printf("\n\nRANDOM READ PHASE\n");
     printf("-----------------\n");
-    
+
     uint64_t* rand_latencies = malloc(NUM_DOCS * sizeof(uint64_t));
-    
+
     // Create random permutation of indices
     int* indices = malloc(NUM_DOCS * sizeof(int));
     for (int i = 0; i < NUM_DOCS; i++) {
         indices[i] = i;
     }
-    
-    // Fisher-Yates shuffle
-    srand(12345);
+
+    // Fisher-Yates shuffle with xorshift (no global rand() lock)
+    uint32_t seed = 12345u;
     for (int i = NUM_DOCS - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        int j = seed % (i + 1);
         int tmp = indices[i];
         indices[i] = indices[j];
         indices[j] = tmp;
     }
-    
-    engine_stats_t rand_start_stats = engine_stats(engine);
-    
+
+    // Local counters — no engine_stats() lock contention
+    size_t local_hits = 0;
+    size_t local_misses = 0;
+
     clock_gettime(CLOCK_MONOTONIC, &start);
     for (int i = 0; i < NUM_DOCS; i++) {
         struct timespec t1, t2;
         clock_gettime(CLOCK_MONOTONIC, &t1);
         
         document_t* doc = engine_get(engine, keys[indices[i]]);
-        if (doc) {
-            volatile uint8_t v = doc->payload.data[0];
-            (void)v;
-        }
         
         clock_gettime(CLOCK_MONOTONIC, &t2);
         rand_latencies[i] = timespec_to_ns(&t2) - timespec_to_ns(&t1);
+        
+        if (doc) {
+            volatile uint8_t v = doc->payload.data[0];
+            (void)v;
+            local_hits++;
+        } else {
+            local_misses++;
+        }
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
-    
+
     uint64_t rand_read_ns = timespec_to_ns(&end) - timespec_to_ns(&start);
-    engine_stats_t rand_end_stats = engine_stats(engine);
-    
+
     printf("Total time: %.2f ms\n", rand_read_ns / 1e6);
     printf("Throughput: %.0f ops/sec\n", NUM_DOCS / (rand_read_ns / 1e9));
-    
-    size_t rand_hot_hits = rand_end_stats.hot_hits - rand_start_stats.hot_hits;
-    size_t rand_cold_hits = rand_end_stats.cold_hits - rand_start_stats.cold_hits;
-    printf("Cache: %zu hot hits (%.1f%%), %zu cold hits (%.1f%%)\n",
-           rand_hot_hits,
-           100.0 * rand_hot_hits / NUM_DOCS,
-           rand_cold_hits,
-           100.0 * rand_cold_hits / NUM_DOCS);
-    
+    printf("Cache: %zu hits (%.1f%%), %zu misses (%.1f%%)\n",
+        local_hits,
+        100.0 * local_hits / NUM_DOCS,
+        local_misses,
+        100.0 * local_misses / NUM_DOCS);
+
     print_latency_stats("Latencies", rand_latencies, NUM_DOCS);
-    
+        
     // ===== FINAL STATS =====
     printf("\n\nFINAL STATE\n");
     printf("-----------\n");
-    
+
     stats = engine_stats(engine);
     printf("Total gets: %zu\n", stats.total_gets);
     printf("Total sets: %zu\n", stats.total_sets);
     printf("Total dels: %zu\n", stats.total_dels);
     printf("Hot tier final: %zu docs, %.2f MB\n",
-           hot_tier_doc_count(hot),
-           hot_tier_used_bytes(hot) / 1e6);
+            hot_tier_doc_count(hot),
+            hot_tier_used_bytes(hot) / 1e6);
     printf("Cold tier final: %zu docs, %.2f MB\n",
-           cold_tier_doc_count(cold),
-           cold_tier_total_bytes(cold) / 1e6);
-    
+            cold_tier_doc_count(cold),
+            cold_tier_total_bytes(cold) / 1e6);
+
     // Cleanup
     engine_destroy(engine);
     for (int i = 0; i < NUM_DOCS; i++) {
@@ -207,7 +212,7 @@ int main() {
     free(seq_latencies);
     free(rand_latencies);
     free(indices);
-    
+
     printf("\n========================================\n");
     return 0;
 }

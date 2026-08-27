@@ -228,6 +228,20 @@ Measured on modern Linux x86_64 hardware with release flags (`-O2`):
 | **Hot Tier Hit Rate** | **90.60%** (588,930 reads) | Satisfied directly in RAM at sub-microsecond latency |
 | **Cold Tier Hit Rate** | **9.40%** (61,070 reads) | Retrieved from append-only disk log |
 
+### 3. Concurrent Throughput (`bin/benchConcurrency` — 650,000 docs, 50,000 ops/thread, 128 MB hot tier)
+
+Four scenarios measure aggregate and per-thread throughput under realistic contention patterns using `pthread_barrier_t` for synchronized start.
+
+| Scenario | Total Threads | Wall Time | Aggregate ops/sec | Per-thread avg | p50 | p99 | Max |
+| :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- |
+| **16 readers, 0 writers** | 16 | ~5380 ms | ~148,000 | ~9,300 ops/sec | 3.65 μs | 3617 μs | 41,741 μs |
+| **8 readers, 1 writer** | 9 | ~430 ms | ~1,046,000 | ~116,000 ops/sec | 3.09 μs | 26.4 μs | 385,944 μs |
+| **4 readers, 4 writers** | 8 | ~432 ms | ~927,000 | ~116,000 ops/sec | 1.65 μs | 16.8 μs | 154,817 μs |
+| **0 readers, 8 writers** | 8 | ~587 ms | ~681,000 | ~85,000 ops/sec | 3.47 μs | 75.3 μs | 9,785 μs |
+
+> [!NOTE]
+> The 16-reader scenario shows high p99 latency (~3.6 ms) because cold-tier reads acquire a mutex that is also held by the `everysec` background sync thread. Read-only workloads that stay entirely in the hot tier see sub-microsecond p50 latencies (see `benchLatency`).
+
 ---
 
 ## Testing & Quality Assurance
