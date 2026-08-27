@@ -111,7 +111,47 @@ void test_cold_tier_crash_recovery() {
     doc_id_free(&id3);
     
     cold_tier_destroy(tier_recovered);
+    printf("PASSED\n");
+}
+
+void test_cold_tier_tombstone_persistence() {
+    printf("test_cold_tier_tombstone_persistence... ");
+    cleanup_test_dir();
     
+    cold_tier_t* tier = cold_tier_create(TEST_DIR);
+    assert(tier != NULL);
+    
+    document_t* doc1 = document_create("del_1", (const uint8_t*)"data1", 5);
+    document_t* doc2 = document_create("del_2", (const uint8_t*)"data2", 5);
+    assert(cold_tier_append(tier, doc1));
+    assert(cold_tier_append(tier, doc2));
+    
+    doc_id_t id1 = doc_id_from_string("del_1");
+    doc_id_t id2 = doc_id_from_string("del_2");
+    
+    // Delete del_1 (writes tombstone)
+    assert(cold_tier_mark_deleted(tier, &id1));
+    
+    cold_tier_destroy(tier); // Crash
+    
+    // Recover
+    cold_tier_t* tier_recovered = cold_tier_create(TEST_DIR);
+    assert(tier_recovered != NULL);
+    
+    // del_1 must NOT be found (tombstone was persisted)
+    document_t* r1 = cold_tier_read(tier_recovered, &id1);
+    assert(r1 == NULL);
+    
+    // del_2 must be found
+    document_t* r2 = cold_tier_read(tier_recovered, &id2);
+    assert(r2 != NULL && memcmp(r2->payload.data, "data2", 5) == 0);
+    
+    document_free(r2);
+    document_free(doc1);
+    document_free(doc2);
+    doc_id_free(&id1);
+    doc_id_free(&id2);
+    cold_tier_destroy(tier_recovered);
     printf("PASSED\n");
 }
 
@@ -119,6 +159,7 @@ int main() {
     test_cold_tier_append_and_read();
     test_cold_tier_checksum_verification();
     test_cold_tier_crash_recovery();
+    test_cold_tier_tombstone_persistence();
     printf("All cold tier tests passed!\n");
     return 0;
 }

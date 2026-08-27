@@ -1,8 +1,19 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #ifndef CALDERADB_ENGINE_H
 #define CALDERADB_ENGINE_H
 
-#include "calderadb/calderadb.h"
 #include <pthread.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include "calderadb/core/types.h"
+#include "calderadb/hot/hotTier.h"
+#include "calderadb/cold/coldTier.h"
 
 typedef struct calderadb_engine calderadb_engine_t;
 

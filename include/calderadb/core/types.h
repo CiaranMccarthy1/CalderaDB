@@ -1,3 +1,10 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #ifndef CALDERADB_TYPES_H
 #define CALDERADB_TYPES_H
 
@@ -43,6 +50,7 @@ typedef struct document {
     timestamp_t last_accessed;
     size_t size_bytes;
     struct document* next;
+    struct document* prev;
 } document_t;
 
 /* Helper functions */

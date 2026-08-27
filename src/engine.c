@@ -7,7 +7,7 @@ struct calderadb_engine {
     hot_tier_t* hot;
     cold_tier_t* cold;
     engine_stats_t stats;
-    pthread_mutex_t lock;
+    pthread_rwlock_t lock; 
 };
 
 calderadb_engine_t* engine_create(size_t hot_capacity, const char* data_dir) {
@@ -27,7 +27,7 @@ calderadb_engine_t* engine_create(size_t hot_capacity, const char* data_dir) {
         return NULL;
     }
     
-    pthread_mutex_init(&engine->lock, NULL);
+    pthread_rwlock_init(&engine->lock, NULL);
     return engine;
 }
 
@@ -35,7 +35,7 @@ void engine_destroy(calderadb_engine_t* engine) {
     if (!engine) return;
     hot_tier_destroy(engine->hot);
     cold_tier_destroy(engine->cold);
-    pthread_mutex_destroy(&engine->lock);
+    pthread_rwlock_destroy(&engine->lock);
     free(engine);
 }
 
@@ -43,37 +43,50 @@ document_t* engine_get(calderadb_engine_t* engine, const char* key) {
     if (!engine || !key) return NULL;
     
     doc_id_t doc_id = doc_id_from_string(key);
-    pthread_mutex_lock(&engine->lock);
-    engine->stats.total_gets++;
+    
+    // Fast path: try hot tier under read lock
+    pthread_rwlock_rdlock(&engine->lock);
+    __atomic_fetch_add(&engine->stats.total_gets, 1, __ATOMIC_RELAXED);
     
     document_t* doc = hot_tier_get(engine->hot, &doc_id);
     if (doc) {
-        engine->stats.hot_hits++;
-        pthread_mutex_unlock(&engine->lock);
+        __atomic_fetch_add(&engine->stats.hot_hits, 1, __ATOMIC_RELAXED);
+        pthread_rwlock_unlock(&engine->lock);
+        doc_id_free(&doc_id);
+        return doc;
+    }
+    pthread_rwlock_unlock(&engine->lock);
+    
+    // Slow path: acquire write lock to access cold tier and promote
+    pthread_rwlock_wrlock(&engine->lock);
+    
+    // Double check hot tier
+    doc = hot_tier_get(engine->hot, &doc_id);
+    if (doc) {
+        __atomic_fetch_add(&engine->stats.hot_hits, 1, __ATOMIC_RELAXED);
+        pthread_rwlock_unlock(&engine->lock);
         doc_id_free(&doc_id);
         return doc;
     }
     
-    engine->stats.misses++; // Will override if found in cold
-    
     doc = cold_tier_read(engine->cold, &doc_id);
     if (doc) {
-        engine->stats.misses--;
-        engine->stats.cold_hits++;
+        __atomic_fetch_add(&engine->stats.cold_hits, 1, __ATOMIC_RELAXED);
         
         // Promote to hot
         size_t doc_size = doc->size_bytes + sizeof(doc_id_t) + sizeof(document_t);
         while (hot_tier_used_bytes(engine->hot) + doc_size > hot_tier_capacity_bytes(engine->hot)) {
             document_t* evicted = hot_tier_evict_one(engine->hot);
-            if (!evicted) break; // Should not happen
+            if (!evicted) break;
             cold_tier_append(engine->cold, evicted);
             document_free(evicted);
         }
         hot_tier_insert(engine->hot, doc);
-        // doc is now in hot tier, caller still uses returned pointer (which is same).
+    } else {
+        __atomic_fetch_add(&engine->stats.misses, 1, __ATOMIC_RELAXED);
     }
     
-    pthread_mutex_unlock(&engine->lock);
+    pthread_rwlock_unlock(&engine->lock);
     doc_id_free(&doc_id);
     return doc;
 }
@@ -84,8 +97,13 @@ bool engine_set(calderadb_engine_t* engine, const char* key, const uint8_t* valu
     document_t* doc = document_create(key, value, value_len);
     if (!doc) return false;
     
-    pthread_mutex_lock(&engine->lock);
-    engine->stats.total_sets++;
+    pthread_rwlock_wrlock(&engine->lock);
+    __atomic_fetch_add(&engine->stats.total_sets, 1, __ATOMIC_RELAXED);
+    
+    // Invalidate stale entry in cold tier if key is being updated
+    doc_id_t doc_id = doc_id_from_string(key);
+    cold_tier_mark_deleted(engine->cold, &doc_id);
+    doc_id_free(&doc_id);
     
     size_t doc_size = doc->size_bytes + sizeof(doc_id_t) + sizeof(document_t);
     while (hot_tier_used_bytes(engine->hot) + doc_size > hot_tier_capacity_bytes(engine->hot)) {
@@ -97,10 +115,13 @@ bool engine_set(calderadb_engine_t* engine, const char* key, const uint8_t* valu
     
     bool ok = hot_tier_insert(engine->hot, doc);
     if (!ok) {
+        //fallback directly to cold tier if hot tier cannot accept doc
+        doc->location = TIER_COLD;
+        ok = cold_tier_append(engine->cold, doc);
         document_free(doc);
     }
     
-    pthread_mutex_unlock(&engine->lock);
+    pthread_rwlock_unlock(&engine->lock);
     return ok;
 }
 
@@ -108,8 +129,8 @@ bool engine_del(calderadb_engine_t* engine, const char* key) {
     if (!engine || !key) return false;
     
     doc_id_t doc_id = doc_id_from_string(key);
-    pthread_mutex_lock(&engine->lock);
-    engine->stats.total_dels++;
+    pthread_rwlock_wrlock(&engine->lock);
+    __atomic_fetch_add(&engine->stats.total_dels, 1, __ATOMIC_RELAXED);
     
     bool removed = false;
     
@@ -124,7 +145,7 @@ bool engine_del(calderadb_engine_t* engine, const char* key) {
         removed = true;
     }
     
-    pthread_mutex_unlock(&engine->lock);
+    pthread_rwlock_unlock(&engine->lock);
     doc_id_free(&doc_id);
     return removed;
 }
@@ -132,9 +153,9 @@ bool engine_del(calderadb_engine_t* engine, const char* key) {
 engine_stats_t engine_stats(calderadb_engine_t* engine) {
     engine_stats_t s = {0};
     if (engine) {
-        pthread_mutex_lock(&engine->lock);
+        pthread_rwlock_rdlock(&engine->lock);
         s = engine->stats;
-        pthread_mutex_unlock(&engine->lock);
+        pthread_rwlock_unlock(&engine->lock);
     }
     return s;
 }

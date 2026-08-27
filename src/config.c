@@ -19,7 +19,7 @@ bool config_load(const char* filename, config_t* cfg) {
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
         char* newline = strchr(line, '\n');
-        if (newline) *newline = '\0';s
+        if (newline) *newline = '\0';
         
         char* eq = strchr(line, '=');
         if (!eq) continue;

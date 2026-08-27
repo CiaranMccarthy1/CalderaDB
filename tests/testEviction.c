@@ -55,9 +55,10 @@ void test_eviction_capacity_limit() {
     
     document_t* doc2 = document_create("doc_cap2", (const uint8_t*)"data_very_large_to_force_eviction", 33);
     
-    // Insertion might succeed by evicting doc1, or fail if doc2 is larger than tier capacity
-    // Either way, doc_count shouldn't exceed capacity bounds.
-    hot_tier_insert(tier, doc2);
+    // Insertion might succeed or fail if doc2 is larger than tier capacity
+    if (!hot_tier_insert(tier, doc2)) {
+        document_free(doc2);
+    }
     
     assert(hot_tier_doc_count(tier) <= 1);
     

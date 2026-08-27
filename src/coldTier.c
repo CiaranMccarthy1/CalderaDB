@@ -24,15 +24,73 @@ struct cold_tier {
     uint64_t current_offset;
 };
 
+// ponytail: real xxHash64 in ~30 lines
+#define XXH_PRIME64_1 0x9E3779B185EBCA87ULL
+#define XXH_PRIME64_2 0xC2B2AE3D27D4EB4FULL
+#define XXH_PRIME64_3 0x165667B19E3779F9ULL
+#define XXH_PRIME64_4 0x85EBCA77C2B2AE63ULL
+#define XXH_PRIME64_5 0x27D4EB2F165667C5ULL
+
+static inline uint64_t xxh_rotl64(uint64_t x, int r) { return (x << r) | (x >> (64 - r)); }
+static inline uint64_t xxh_round(uint64_t acc, uint64_t input) {
+    return xxh_rotl64(acc + input * XXH_PRIME64_2, 31) * XXH_PRIME64_1;
+}
+
 static uint64_t xxhash64(const uint8_t* data, size_t len) {
-    /* Simple hash for MVP - in production use xxHash */
-    uint64_t hash = 0x9e3779b97f4a7c15ULL;
-    for (size_t i = 0; i < len; i++) {
-        hash ^= data[i];
-        hash *= 0x9e3779b97f4a7c15ULL;
-        hash = (hash << 31) | (hash >> 33);
+    const uint8_t* p = data;
+    const uint8_t* const bEnd = data + len;
+    uint64_t h64;
+
+    if (len >= 32) {
+        const uint8_t* const limit = bEnd - 32;
+        uint64_t v1 = XXH_PRIME64_1 + XXH_PRIME64_2;
+        uint64_t v2 = XXH_PRIME64_2;
+        uint64_t v3 = 0;
+        uint64_t v4 = (uint64_t)0 - XXH_PRIME64_1;
+        do {
+            uint64_t k1, k2, k3, k4;
+            memcpy(&k1, p, 8); memcpy(&k2, p + 8, 8);
+            memcpy(&k3, p + 16, 8); memcpy(&k4, p + 24, 8);
+            v1 = xxh_round(v1, k1); v2 = xxh_round(v2, k2);
+            v3 = xxh_round(v3, k3); v4 = xxh_round(v4, k4);
+            p += 32;
+        } while (p <= limit);
+        h64 = xxh_rotl64(v1, 1) + xxh_rotl64(v2, 7) + xxh_rotl64(v3, 12) + xxh_rotl64(v4, 18);
+        h64 = (h64 ^ xxh_round(0, v1)) * XXH_PRIME64_1 + XXH_PRIME64_4;
+        h64 = (h64 ^ xxh_round(0, v2)) * XXH_PRIME64_1 + XXH_PRIME64_4;
+        h64 = (h64 ^ xxh_round(0, v3)) * XXH_PRIME64_1 + XXH_PRIME64_4;
+        h64 = (h64 ^ xxh_round(0, v4)) * XXH_PRIME64_1 + XXH_PRIME64_4;
+    } else {
+        h64 = XXH_PRIME64_5;
     }
-    return hash;
+    h64 += (uint64_t)len;
+
+    while (p + 8 <= bEnd) {
+        uint64_t k1;
+        memcpy(&k1, p, 8);
+        h64 ^= xxh_round(0, k1);
+        h64 = xxh_rotl64(h64, 27) * XXH_PRIME64_1 + XXH_PRIME64_4;
+        p += 8;
+    }
+    if (p + 4 <= bEnd) {
+        uint32_t k1;
+        memcpy(&k1, p, 4);
+        h64 ^= (uint64_t)(k1) * XXH_PRIME64_1;
+        h64 = xxh_rotl64(h64, 23) * XXH_PRIME64_2 + XXH_PRIME64_3;
+        p += 4;
+    }
+    while (p < bEnd) {
+        h64 ^= (*p) * XXH_PRIME64_5;
+        h64 = xxh_rotl64(h64, 11) * XXH_PRIME64_1;
+        p++;
+    }
+
+    h64 ^= h64 >> 33;
+    h64 *= XXH_PRIME64_2;
+    h64 ^= h64 >> 29;
+    h64 *= XXH_PRIME64_3;
+    h64 ^= h64 >> 32;
+    return h64;
 }
 
 cold_tier_t* cold_tier_create(const char* data_dir) {
@@ -86,9 +144,20 @@ cold_tier_t* cold_tier_create(const char* data_dir) {
 void cold_tier_destroy(cold_tier_t* tier) {
     if (!tier) return;
     
-    fclose(tier->data_fp);
-    fclose(tier->index_fp);
-    hashtable_destroy(tier->index);
+    if (tier->index) {
+        ht_iter_t* iter = hashtable_iter_create(tier->index);
+        if (iter) {
+            doc_id_t key;
+            document_t* val;
+            while (hashtable_iter_next(iter, &key, &val)) {
+                free(val); // index_entry_t
+            }
+            hashtable_iter_destroy(iter);
+        }
+        hashtable_destroy(tier->index);
+    }
+    if (tier->data_fp) fclose(tier->data_fp);
+    if (tier->index_fp) fclose(tier->index_fp);
     free(tier);
 }
 
@@ -116,16 +185,22 @@ bool cold_tier_append(cold_tier_t* tier, document_t* doc) {
     entry->version = doc->version;
     entry->modified_at = doc->modified_at;
     
-    doc_id_t key = {.data = strdup(doc->id.data), .len = doc->id.len};
-    if (!hashtable_insert(tier->index, &key, (document_t*)entry)) {
+    // Free existing index entry if overwriting
+    index_entry_t* existing = (index_entry_t*)hashtable_lookup(tier->index, &doc->id);
+    if (existing) {
+        if (tier->total_bytes >= existing->payload_len) tier->total_bytes -= existing->payload_len;
+        free(existing);
+    } else {
+        tier->doc_count++;
+    }
+    
+    if (!hashtable_insert(tier->index, &doc->id, (document_t*)entry)) {
         free(entry);
-        doc_id_free(&key);
         return false;
     }
     
     tier->current_offset += 4 + id_len + 4 + payload_len + 8;
     tier->total_bytes += payload_len;
-    tier->doc_count++;
     
     return true;
 }
@@ -177,7 +252,25 @@ document_t* cold_tier_read(cold_tier_t* tier, const doc_id_t* id) {
 
 bool cold_tier_mark_deleted(cold_tier_t* tier, const doc_id_t* id) {
     if (!tier || !id) return false;
-    /* Soft delete - just remove from index */
+    
+    index_entry_t* entry = (index_entry_t*)hashtable_lookup(tier->index, id);
+    if (!entry) return false;
+    
+    // ponytail: persist tombstone with 0xFFFFFFFF payload_len
+    uint32_t id_len = (uint32_t)id->len;
+    uint32_t payload_len = 0xFFFFFFFF;
+    uint64_t checksum = 0;
+    fwrite(&id_len, sizeof(uint32_t), 1, tier->data_fp);
+    fwrite(id->data, id_len, 1, tier->data_fp);
+    fwrite(&payload_len, sizeof(uint32_t), 1, tier->data_fp);
+    fwrite(&checksum, sizeof(uint64_t), 1, tier->data_fp);
+    fflush(tier->data_fp);
+
+    tier->current_offset += 4 + id_len + 4 + 8;
+    if (tier->doc_count > 0) tier->doc_count--;
+    if (tier->total_bytes >= entry->payload_len) tier->total_bytes -= entry->payload_len;
+
+    free(entry);
     return hashtable_remove(tier->index, id);
 }
 
@@ -210,11 +303,32 @@ bool cold_tier_recover(cold_tier_t* tier) {
             break;
         }
         id_data[id_len] = '\0';
+        doc_id_t key = {.data = id_data, .len = id_len};
         
         uint32_t payload_len;
         if (fread(&payload_len, sizeof(uint32_t), 1, tier->data_fp) != 1) {
             free(id_data);
             break;
+        }
+        
+        if (payload_len == 0xFFFFFFFF) {
+            // Tombstone record: remove from index on recovery
+            uint64_t checksum;
+            if (fread(&checksum, sizeof(uint64_t), 1, tier->data_fp) != 1) {
+                free(id_data);
+                break;
+            }
+            index_entry_t* existing = (index_entry_t*)hashtable_lookup(tier->index, &key);
+            if (existing) {
+                if (tier->doc_count > 0) tier->doc_count--;
+                if (tier->total_bytes >= existing->payload_len) tier->total_bytes -= existing->payload_len;
+                free(existing);
+                hashtable_remove(tier->index, &key);
+            }
+            free(id_data);
+            offset += 4 + id_len + 4 + 8;
+            tier->current_offset = offset;
+            continue;
         }
         
         fseek(tier->data_fp, payload_len, SEEK_CUR);
@@ -225,6 +339,14 @@ bool cold_tier_recover(cold_tier_t* tier) {
             break;
         }
         
+        index_entry_t* existing = (index_entry_t*)hashtable_lookup(tier->index, &key);
+        if (existing) {
+            if (tier->total_bytes >= existing->payload_len) tier->total_bytes -= existing->payload_len;
+            free(existing);
+        } else {
+            tier->doc_count++;
+        }
+        
         /* Add to index */
         index_entry_t* entry = malloc(sizeof(index_entry_t));
         entry->offset = offset;
@@ -232,13 +354,12 @@ bool cold_tier_recover(cold_tier_t* tier) {
         entry->version = 1;
         entry->modified_at = 0;
         
-        doc_id_t key = {.data = id_data, .len = id_len};
         hashtable_insert(tier->index, &key, (document_t*)entry);
+        free(id_data);
         
-        tier->current_offset = offset + 4 + id_len + 4 + payload_len + 8;
+        offset += 4 + id_len + 4 + payload_len + 8;
         tier->total_bytes += payload_len;
-        tier->doc_count++;
-        offset = tier->current_offset;
+        tier->current_offset = offset;
     }
     
     return true;
@@ -252,7 +373,6 @@ bool cold_tier_compact(cold_tier_t* tier) {
     FILE* tmp_fp = fopen(tmp_path, "wb");
     if (!tmp_fp) return false;
 
-    // ponytail: single-pass compaction, no incremental/background, just rewrite the whole file
     uint64_t new_offset = 0;
     
     ht_iter_t* it = hashtable_iter_create(tier->index);

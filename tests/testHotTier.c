@@ -22,8 +22,6 @@ void test_hot_tier_insert_and_get() {
     assert(strcmp(retrieved->id.data, "test_1") == 0);
     
     hot_tier_destroy(tier);
-    document_free(doc);
-    
     printf("PASSED\n");
 }
 
@@ -34,7 +32,6 @@ void test_hot_tier_eviction() {
     hot_tier_t* tier = hot_tier_create(400);
     assert(tier != NULL);
     
-    /* Insert 3 documents - should trigger eviction */
     for (int i = 0; i < 3; i++) {
         char id[16];
         snprintf(id, sizeof(id), "doc_%d", i);
@@ -43,7 +40,6 @@ void test_hot_tier_eviction() {
         assert(hot_tier_insert(tier, doc));
     }
     
-    /* Should have 2-3 documents (eviction may have occurred) */
     printf("doc_count=%zu ", hot_tier_doc_count(tier));
     assert(hot_tier_doc_count(tier) <= 3);
     
