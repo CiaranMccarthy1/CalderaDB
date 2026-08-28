@@ -215,16 +215,16 @@ Measured on modern Linux x86_64 hardware with release flags (`-O2`):
 
 | Operation | Throughput | p50 Latency | p95 Latency | p99 Latency | Max Latency |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Sequential Insert** | ~3,880,000 ops/sec | — | — | — | — |
-| **Sequential Read** | ~8,040,000 ops/sec | 0.080 μs | 0.264 μs | 0.532 μs | 7.369 μs |
-| **Random Read** | ~3,370,000 ops/sec | 0.217 μs | 0.692 μs | 1.144 μs | 14.998 μs |
+| **Sequential Insert** | ~2,536,532 ops/sec | — | — | — | — |
+| **Sequential Read** | ~6,615,642 ops/sec | 0.115 μs | 0.214 μs | 0.342 μs | 4.161 μs |
+| **Random Read** | ~3,662,741 ops/sec | 0.217 μs | 0.321 μs | 0.473 μs | 11.109 μs |
 
 ### 2. Tier Spillover Throughput (`bin/benchThroughput` - 650,000 documents, 128MB RAM boundary)
 
 | Metric | Measured Value | Description |
 | :--- | :--- | :--- |
-| **Bulk Insert Throughput** | ~2,401,000 ops/sec | 650,000 documents inserted in 270 ms |
-| **Random Read Throughput** | ~1,362,000 ops/sec | 650,000 reads executed across hot + cold tiers |
+| **Bulk Insert Throughput** | ~1,343,915 ops/sec | 650,000 documents inserted in 483.66 ms |
+| **Random Read Throughput** | ~820,288 ops/sec | 650,000 reads executed across hot + cold tiers |
 | **Hot Tier Hit Rate** | **90.60%** (588,930 reads) | Satisfied directly in RAM at sub-microsecond latency |
 | **Cold Tier Hit Rate** | **9.40%** (61,070 reads) | Retrieved from append-only disk log |
 
@@ -234,10 +234,10 @@ Four scenarios measure aggregate and per-thread throughput under realistic conte
 
 | Scenario | Total Threads | Wall Time | Aggregate ops/sec | Per-thread avg | p50 | p99 | Max |
 | :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- |
-| **16 readers, 0 writers** | 16 | ~5380 ms | ~148,000 | ~9,300 ops/sec | 3.65 μs | 3617 μs | 41,741 μs |
-| **8 readers, 1 writer** | 9 | ~430 ms | ~1,046,000 | ~116,000 ops/sec | 3.09 μs | 26.4 μs | 385,944 μs |
-| **4 readers, 4 writers** | 8 | ~432 ms | ~927,000 | ~116,000 ops/sec | 1.65 μs | 16.8 μs | 154,817 μs |
-| **0 readers, 8 writers** | 8 | ~587 ms | ~681,000 | ~85,000 ops/sec | 3.47 μs | 75.3 μs | 9,785 μs |
+| **16 readers, 0 writers** | 16 | 369.93 ms | 2,162,553 | 135,160 ops/sec | 1.23 μs | 26.89 μs | 14,879.59 μs |
+| **8 readers, 1 writer** | 9 | 233.76 ms | 1,925,050 | 213,894 ops/sec | 1.17 μs | 11.53 μs | 177,311.12 μs |
+| **4 readers, 4 writers** | 8 | 380.60 ms | 1,050,984 | 131,373 ops/sec | 1.64 μs | 17.38 μs | 87,022.34 μs |
+| **0 readers, 8 writers** | 8 | 571.23 ms | 700,237 | 87,530 ops/sec | 3.38 μs | 73.97 μs | 6,012.06 μs |
 
 > [!NOTE]
 > The 16-reader scenario shows high p99 latency (~3.6 ms) because cold-tier reads acquire a mutex that is also held by the `everysec` background sync thread. Read-only workloads that stay entirely in the hot tier see sub-microsecond p50 latencies (see `benchLatency`).
