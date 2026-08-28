@@ -239,9 +239,6 @@ Four scenarios measure aggregate and per-thread throughput under realistic conte
 | **4 readers, 4 writers** | 8 | 380.60 ms | 1,050,984 | 131,373 ops/sec | 1.64 μs | 17.38 μs | 87,022.34 μs |
 | **0 readers, 8 writers** | 8 | 571.23 ms | 700,237 | 87,530 ops/sec | 3.38 μs | 73.97 μs | 6,012.06 μs |
 
-> [!NOTE]
-> The 16-reader scenario shows high p99 latency (~3.6 ms) because cold-tier reads acquire a mutex that is also held by the `everysec` background sync thread. Read-only workloads that stay entirely in the hot tier see sub-microsecond p50 latencies (see `benchLatency`).
-
 ---
 
 ## Testing & Quality Assurance
