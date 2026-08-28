@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <time.h>
 
 struct hot_tier {
     hashtable_t* documents;
@@ -13,7 +14,8 @@ struct hot_tier {
     size_t doc_count;
     document_t* lru_head; // MRU
     document_t* lru_tail; // LRU (victim)
-    pthread_rwlock_t lock;
+    pthread_rwlock_t ht_lock;
+    pthread_mutex_t lru_lock;
 };
 
 // O(1) intrusive LRU list operations
@@ -57,7 +59,8 @@ hot_tier_t* hot_tier_create(size_t capacity_bytes) {
     tier->capacity_bytes = capacity_bytes ? capacity_bytes : 1024 * 1024 * 1024; /* 1GB default */
     tier->used_bytes = 0;
     tier->doc_count = 0;
-    pthread_rwlock_init(&tier->lock, NULL);
+    pthread_rwlock_init(&tier->ht_lock, NULL);
+    pthread_mutex_init(&tier->lru_lock, NULL);
     
     return tier;
 }
@@ -72,16 +75,17 @@ void hot_tier_destroy(hot_tier_t* tier) {
         curr = next;
     }
     hashtable_destroy(tier->documents);
-    pthread_rwlock_destroy(&tier->lock);
+    pthread_mutex_destroy(&tier->lru_lock);
+    pthread_rwlock_destroy(&tier->ht_lock);
     free(tier);
 }
 
 bool hot_tier_insert(hot_tier_t* tier, document_t* doc) {
     if (!tier || !doc) return false;
     
-    pthread_rwlock_wrlock(&tier->lock);
+    pthread_rwlock_wrlock(&tier->ht_lock);
+    pthread_mutex_lock(&tier->lru_lock);
     
-    /* If key exists, detach and remove old document */
     document_t* existing = hashtable_lookup(tier->documents, &doc->id);
     if (existing) {
         lru_detach(tier, existing);
@@ -91,88 +95,96 @@ bool hot_tier_insert(hot_tier_t* tier, document_t* doc) {
         tier->doc_count--;
         document_free(existing);
     }
+    pthread_mutex_unlock(&tier->lru_lock);
 
-    /* Check capacity */
     size_t doc_size = doc->size_bytes + sizeof(doc_id_t) + sizeof(document_t);
     if (tier->used_bytes + doc_size > tier->capacity_bytes) {
-        pthread_rwlock_unlock(&tier->lock);
+        pthread_rwlock_unlock(&tier->ht_lock);
         return false;
     }
     
     /* Insert into hash table */
     if (!hashtable_insert(tier->documents, &doc->id, doc)) {
-        pthread_rwlock_unlock(&tier->lock);
+        pthread_rwlock_unlock(&tier->ht_lock);
         return false;
     }
     
+    pthread_mutex_lock(&tier->lru_lock);
     lru_push_head(tier, doc);
+    pthread_mutex_unlock(&tier->lru_lock);
     tier->used_bytes += doc_size;
     tier->doc_count++;
     doc->location = TIER_HOT;
     
-    pthread_rwlock_unlock(&tier->lock);
+    pthread_rwlock_unlock(&tier->ht_lock);
     return true;
 }
 
 document_t* hot_tier_get(hot_tier_t* tier, const doc_id_t* id) {
     if (!tier || !id) return NULL;
     
-    pthread_rwlock_wrlock(&tier->lock);
+    pthread_rwlock_rdlock(&tier->ht_lock);
     document_t* doc = hashtable_lookup(tier->documents, id);
     
     if (doc) {
+        pthread_mutex_lock(&tier->lru_lock);
         doc->access_count++;
         doc->last_accessed = (timestamp_t)time(NULL) * 1000; /* milliseconds */
         lru_touch(tier, doc);
+        pthread_mutex_unlock(&tier->lru_lock);
     }
     
-    pthread_rwlock_unlock(&tier->lock);
+    pthread_rwlock_unlock(&tier->ht_lock);
     return doc;
 }
 
 bool hot_tier_remove(hot_tier_t* tier, const doc_id_t* id) {
     if (!tier || !id) return false;
     
-    pthread_rwlock_wrlock(&tier->lock);
+    pthread_rwlock_wrlock(&tier->ht_lock);
     
     document_t* doc = hashtable_lookup(tier->documents, id);
     if (!doc) {
-        pthread_rwlock_unlock(&tier->lock);
+        pthread_rwlock_unlock(&tier->ht_lock);
         return false;
     }
     
+    pthread_mutex_lock(&tier->lru_lock);
     lru_detach(tier, doc);
+    pthread_mutex_unlock(&tier->lru_lock);
     size_t doc_size = doc->size_bytes + sizeof(doc_id_t) + sizeof(document_t);
     if (hashtable_remove(tier->documents, id)) {
         tier->used_bytes -= doc_size;
         tier->doc_count--;
-        pthread_rwlock_unlock(&tier->lock);
+        pthread_rwlock_unlock(&tier->ht_lock);
         return true;
     }
     
-    pthread_rwlock_unlock(&tier->lock);
+    pthread_rwlock_unlock(&tier->ht_lock);
     return false;
 }
 
 document_t* hot_tier_evict_one(hot_tier_t* tier) {
     if (!tier) return NULL;
     
-    pthread_rwlock_wrlock(&tier->lock);
+    pthread_rwlock_wrlock(&tier->ht_lock);
     
-    /* O(1) LRU eviction from tail */
+    pthread_mutex_lock(&tier->lru_lock);
     document_t* victim = tier->lru_tail;
     if (victim) {
         lru_detach(tier, victim);
+        pthread_mutex_unlock(&tier->lru_lock);
         hashtable_remove(tier->documents, &victim->id);
         size_t doc_size = victim->size_bytes + sizeof(doc_id_t) + sizeof(document_t);
         tier->used_bytes -= doc_size;
         tier->doc_count--;
         victim->location = TIER_COLD;
-        pthread_rwlock_unlock(&tier->lock);
+        pthread_rwlock_unlock(&tier->ht_lock);
         return victim;
     }
+    pthread_mutex_unlock(&tier->lru_lock);
     
-    pthread_rwlock_unlock(&tier->lock);
+    pthread_rwlock_unlock(&tier->ht_lock);
     return NULL;
 }
 
