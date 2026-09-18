@@ -108,6 +108,7 @@ bool hot_tier_insert(hot_tier_t* tier, document_t* doc) {
         pthread_rwlock_unlock(&tier->ht_lock);
         return false;
     }
+    document_retain(doc);
     
     pthread_mutex_lock(&tier->lru_lock);
     lru_push_head(tier, doc);
@@ -132,6 +133,7 @@ document_t* hot_tier_get(hot_tier_t* tier, const doc_id_t* id) {
         doc->last_accessed = (timestamp_t)time(NULL) * 1000; /* milliseconds */
         lru_touch(tier, doc);
         pthread_mutex_unlock(&tier->lru_lock);
+        document_retain(doc);
     }
     
     pthread_rwlock_unlock(&tier->ht_lock);
@@ -157,6 +159,7 @@ bool hot_tier_remove(hot_tier_t* tier, const doc_id_t* id) {
         tier->used_bytes -= doc_size;
         tier->doc_count--;
         pthread_rwlock_unlock(&tier->ht_lock);
+        document_free(doc);
         return true;
     }
     

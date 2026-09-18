@@ -38,12 +38,22 @@ document_t* document_create(const char* id, const uint8_t* data, size_t len) {
     doc->size_bytes = len;
     doc->created_at = (timestamp_t)time(NULL);
     doc->modified_at = doc->created_at;
+    doc->ref_count = 1;
     return doc;
+}
+
+void document_retain(document_t* doc) {
+    if (doc) {
+        __atomic_fetch_add(&doc->ref_count, 1, __ATOMIC_RELAXED);
+    }
 }
 
 void document_free(document_t* doc) {
     if (!doc) return;
-    doc_id_free(&doc->id);
-    payload_free(&doc->payload);
-    free(doc);
+    if (__atomic_fetch_sub(&doc->ref_count, 1, __ATOMIC_RELEASE) == 1) {
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        doc_id_free(&doc->id);
+        payload_free(&doc->payload);
+        free(doc);
+    }
 }

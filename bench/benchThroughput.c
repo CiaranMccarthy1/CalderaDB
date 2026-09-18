@@ -85,6 +85,7 @@ int main() {
         if (doc) {
             volatile uint8_t v = doc->payload.data[0];
             (void)v;
+            document_free(doc);
         }
     }
     

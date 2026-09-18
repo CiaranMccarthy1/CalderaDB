@@ -63,8 +63,7 @@ uint8_t* request_handler(void* ctx, const uint8_t* req, size_t req_len, size_t* 
         document_t* doc = engine_get(engine, key);
         if (doc) {
             snprintf(resp_buf, sizeof(resp_buf), "+%.*s\r\n", (int)doc->payload.len, doc->payload.data);
-            // Wait, we need to free doc? engine_get returns a pointer to the doc in the hot tier.
-            // Actually, in hotTier, it returns a pointer without transferring ownership.
+            document_free(doc);
         } else {
             snprintf(resp_buf, sizeof(resp_buf), "-NOT_FOUND\r\n");
         }

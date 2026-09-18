@@ -20,6 +20,7 @@ void test_hot_tier_insert_and_get() {
     document_t* retrieved = hot_tier_get(tier, &id);
     assert(retrieved != NULL);
     assert(strcmp(retrieved->id.data, "test_1") == 0);
+    document_free(retrieved);
     
     hot_tier_destroy(tier);
     printf("PASSED\n");
@@ -28,8 +29,8 @@ void test_hot_tier_insert_and_get() {
 void test_hot_tier_eviction() {
     printf("test_hot_tier_eviction... ");
     
-    /* Create tier with capacity for ~2 documents */
-    hot_tier_t* tier = hot_tier_create(400);
+    /* Create tier with capacity for ~3 documents */
+    hot_tier_t* tier = hot_tier_create(500);
     assert(tier != NULL);
     
     for (int i = 0; i < 3; i++) {

@@ -105,6 +105,7 @@ int main() {
         if (doc) {
             volatile uint8_t v = doc->payload.data[0];
             (void)v;
+            document_free(doc);
         }
         
         clock_gettime(CLOCK_MONOTONIC, &t2);
@@ -170,6 +171,7 @@ int main() {
             volatile uint8_t v = doc->payload.data[0];
             (void)v;
             local_hits++;
+            document_free(doc);
         } else {
             local_misses++;
         }

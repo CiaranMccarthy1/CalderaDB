@@ -122,8 +122,8 @@ bool engine_set(calderadb_engine_t* engine, const char* key, const uint8_t* valu
         //fallback directly to cold tier if hot tier cannot accept doc
         doc->location = TIER_COLD;
         ok = cold_tier_append(engine->cold, doc);
-        document_free(doc);
     }
+    document_free(doc);
     
     pthread_rwlock_unlock(&engine->lock);
     return ok;

@@ -26,6 +26,7 @@ void test_engine_basic_crud() {
     assert(doc != NULL);
     assert(doc->payload.len == 2);
     assert(memcmp(doc->payload.data, "v1", 2) == 0);
+    document_free(doc);
     
     // STATS
     engine_stats_t stats = engine_stats(engine);
@@ -80,6 +81,7 @@ static void* reader_thread(void* arg) {
         document_t* doc = engine_get(rarg->engine, rarg->key);
         assert(doc != NULL);
         assert(doc->payload.len == 5);
+        document_free(doc);
     }
     return NULL;
 }

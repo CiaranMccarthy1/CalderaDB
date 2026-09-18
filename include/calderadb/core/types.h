@@ -49,6 +49,7 @@ typedef struct document {
     uint32_t access_count;
     timestamp_t last_accessed;
     size_t size_bytes;
+    int32_t ref_count;
     struct document* next;
     struct document* prev;
 } document_t;
@@ -59,6 +60,7 @@ void doc_id_free(doc_id_t* id);
 binary_payload_t payload_from_bytes(const uint8_t* data, size_t len);
 void payload_free(binary_payload_t* payload);
 document_t* document_create(const char* id, const uint8_t* data, size_t len);
+void document_retain(document_t* doc);
 void document_free(document_t* doc);
 
 #endif /* CALDERADB_TYPES_H */

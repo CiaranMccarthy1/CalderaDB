@@ -56,7 +56,8 @@ static void* worker(void* arg) {
             engine_set(w->engine, new_key, (const uint8_t*)"v", 1);
         } else {
             int idx = (w->thread_id + i * 997) % w->num_keys;
-            engine_get(w->engine, w->keys[idx]);
+            document_t* doc = engine_get(w->engine, w->keys[idx]);
+            if (doc) document_free(doc);
         }
         w->samples[i] = now_ns() - op_t0;
     }

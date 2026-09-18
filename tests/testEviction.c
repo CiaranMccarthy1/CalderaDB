@@ -9,7 +9,7 @@ void test_eviction_lru_order() {
     printf("test_eviction_lru_order... ");
     
     // capacity for slightly more than 3 small docs
-    hot_tier_t* tier = hot_tier_create(400);
+    hot_tier_t* tier = hot_tier_create(500);
     assert(tier != NULL);
     
     document_t* doc0 = document_create("doc_0", (const uint8_t*)"000", 3);
@@ -29,6 +29,7 @@ void test_eviction_lru_order() {
     assert(accessed != NULL);
     // Since hot_tier_get uses coarse time(), let's manually override to be the highest
     accessed->last_accessed = 400;
+    document_free(accessed);
     
     // Evict one - should be doc_1 because doc_0 was recently accessed (400), and doc_1 (200) is older than doc_2 (300)
     document_t* evicted = hot_tier_evict_one(tier);
